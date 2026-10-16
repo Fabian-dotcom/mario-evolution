@@ -3,6 +3,13 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+# virtualenvs
+.venv/
+.venv-tmp/
+
+# Emulator-Klon (nur Referenz, nicht Teil des Projekts)
+game/
+
 # C extensions
 *.so
 
