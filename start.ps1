@@ -17,6 +17,8 @@ if (-not (Test-Path ".venv\Scripts\python.exe")) {
 
 Write-Host "Pruefe/Installiere Abhaengigkeiten ..." -ForegroundColor Cyan
 .\.venv\Scripts\python.exe -m pip install -q -r requirements.txt
+.\.venv\Scripts\python.exe -m pip install -q -e .
 
 Write-Host "Starte Dashboard (python -m mario_evolution) ..." -ForegroundColor Green
+$env:PYTHONPATH = "$PSScriptRoot\src;$env:PYTHONPATH"
 .\.venv\Scripts\python.exe -m mario_evolution

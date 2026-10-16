@@ -229,7 +229,9 @@ Ablauf im Dashboard:
    **Neue Generation** drücken – Selektion + Mutation erzeugen die
    nächste Population.
 4. **Speichern/Laden** – Experiment (alle Genome, Statistiken, Rekord)
-   als JSON sichern und später fortsetzen.
+   als JSON sichern und später fortsetzen. Gespeicherte Checkpoints
+   befinden sich standardmäßig im Ordner `checkpoints/` (z. B.
+   `checkpoints/mario_brain_gen16.json`).
 
 Hinweis: 8 Emulator-Instanzen sind eine praktische Obergrenze für
 flüssige Darstellung; mehr Instanzen = mehr CPU-Last (jede Instanz

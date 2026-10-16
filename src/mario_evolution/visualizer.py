@@ -29,6 +29,7 @@ Technische Grundsätze:
 from __future__ import annotations
 
 import tkinter as tk
+from pathlib import Path
 from tkinter import messagebox, filedialog, ttk
 
 import numpy as np
@@ -113,7 +114,7 @@ class MarioEvolutionApp:
         self._photo_refs: list[tk.PhotoImage] = []  # tkinter braucht Referenzen!
         self._stats_labels: dict[str, tk.Label] = {}
         self._hist_points: list[tuple[int, float, float]] = []
-        self._net_cache: dict = {"label": None, "items": None}
+        self._net_cache: dict = {"key": None, "items": None, "cw": 0, "ch": 0}
 
         self._build_layout()
         self._create_experiment()
@@ -166,49 +167,77 @@ class MarioEvolutionApp:
         self.canvas_all.pack(fill=tk.BOTH, expand=True, padx=8, pady=4)
 
         # RECHTS: drei Panels
-        right = tk.Frame(main, bg=BG, width=580)
+        right = tk.Frame(main, bg=BG, width=620)
         right.pack(side=tk.RIGHT, fill=tk.Y)
         right.pack_propagate(False)
 
+        # RECHTS OBEN: Bester Lauf (kompakt mit Vorschau 128x120 und Daten)
         top_right = tk.LabelFrame(right, text="Bester Lauf", bg=PANEL_BG, fg=ACCENT)
-        top_right.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=6, pady=4)
-        self.lbl_best_info = tk.Label(top_right, text="-", bg=PANEL_BG, fg=FG,
-                                      font=("Consolas", 10), justify=tk.LEFT, anchor="w")
-        self.lbl_best_info.pack(fill=tk.X, padx=6, pady=2)
-        self.label_best_img = tk.Label(top_right, bg=PANEL_BG)
-        self.label_best_img.pack(padx=6, pady=4)
+        top_right.pack(side=tk.TOP, fill=tk.X, padx=6, pady=4)
 
+        top_inner = tk.Frame(top_right, bg=PANEL_BG)
+        top_inner.pack(fill=tk.X, padx=6, pady=4)
+
+        self.label_best_img = tk.Label(top_inner, bg=PANEL_BG)
+        self.label_best_img.pack(side=tk.LEFT, padx=(0, 8))
+
+        self.lbl_best_info = tk.Label(top_inner, text="-", bg=PANEL_BG, fg=FG,
+                                      font=("Consolas", 9), justify=tk.LEFT, anchor="nw")
+        self.lbl_best_info.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # RECHTS UNTEN: Statistiken & Fitnessverlauf (unten angedockt)
+        bottom_right = tk.LabelFrame(right, text="Statistiken & Verlauf", bg=PANEL_BG, fg=ACCENT)
+        bottom_right.pack(side=tk.BOTTOM, fill=tk.X, padx=6, pady=4)
+
+        stats_frame = tk.Frame(bottom_right, bg=PANEL_BG)
+        stats_frame.pack(fill=tk.X, padx=6, pady=2)
+        stat_entries = [
+            ("best_fitness", "Beste Fit:"),
+            ("average_fitness", "Ø Fitness:"),
+            ("worst_fitness", "Schlechteste:"),
+            ("best_x_pos", "Beste x-Pos:"),
+            ("success_rate", "Erfolgsquote:"),
+            ("success_count", "Erfolge:"),
+            ("average_steps", "Ø Schritte:"),
+            ("blocked_steps", "Blockiert:"),
+        ]
+        self._stats_labels = {}
+        for idx, (name, display_title) in enumerate(stat_entries):
+            col_offset = 0 if idx < 4 else 2
+            row = idx % 4
+            tk.Label(stats_frame, text=display_title, bg=PANEL_BG, fg=FG,
+                     font=("Consolas", 8), width=13, anchor="w").grid(
+                column=col_offset, row=row, sticky="w", padx=(0, 2))
+            lbl = tk.Label(stats_frame, text="-", bg=PANEL_BG, fg=ACCENT,
+                           font=("Consolas", 8, "bold"), width=8, anchor="w")
+            lbl.grid(column=col_offset + 1, row=row, sticky="w",
+                     padx=(0, 10 if col_offset == 0 else 0))
+            self._stats_labels[name] = lbl
+
+        self.canvas_hist = tk.Canvas(bottom_right, bg=PANEL_BG, height=72, highlightthickness=0)
+        self.canvas_hist.pack(fill=tk.X, padx=6, pady=3)
+
+        # RECHTS MITTE: Neuronales Netz (erhaelt den maximalen Platz)
         mid_right = tk.LabelFrame(right, text="Neuronales Netz des ausgewählten Individuums",
                                   bg=PANEL_BG, fg=ACCENT)
         mid_right.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=6, pady=4)
-        self.lbl_net_info = tk.Label(mid_right, text="-", bg=PANEL_BG, fg=FG,
-                                     font=("Consolas", 9), justify=tk.LEFT, anchor="w")
-        self.lbl_net_info.pack(fill=tk.X, padx=6)
-        self.canvas_net = tk.Canvas(mid_right, bg=PANEL_BG, highlightthickness=0)
-        self.canvas_net.pack(fill=tk.BOTH, expand=True, padx=6, pady=4)
 
-        bottom_right = tk.LabelFrame(right, text="Statistiken", bg=PANEL_BG, fg=ACCENT)
-        bottom_right.pack(side=tk.TOP, fill=tk.X, padx=6, pady=4)
-        stats_frame = tk.Frame(bottom_right, bg=PANEL_BG)
-        stats_frame.pack(fill=tk.X, padx=6, pady=2)
-        for name in ("best_fitness", "average_fitness", "worst_fitness",
-                     "success_rate", "success_count", "average_steps",
-                     "blocked_steps", "best_x_pos"):
-            tk.Label(stats_frame, text=name, bg=PANEL_BG, fg=FG,
-                     font=("Consolas", 9), width=18, anchor="w").grid(
-                column=0, row=len(self._stats_labels), sticky="w")
-            lbl = tk.Label(stats_frame, text="-", bg=PANEL_BG, fg=ACCENT,
-                           font=("Consolas", 9), anchor="w")
-            lbl.grid(column=1, row=len(self._stats_labels), sticky="w")
-            self._stats_labels[name] = lbl
-        self.canvas_hist = tk.Canvas(bottom_right, bg=PANEL_BG, height=110, highlightthickness=0)
-        self.canvas_hist.pack(fill=tk.X, padx=6, pady=4)
-        sel_frame = tk.Frame(bottom_right, bg=PANEL_BG)
-        sel_frame.pack(fill=tk.X, padx=6, pady=2)
-        tk.Label(sel_frame, text="Individuum:", bg=PANEL_BG, fg=FG).pack(side=tk.LEFT)
-        self.combo_individual = ttk.Combobox(sel_frame, state="readonly", width=20)
+        net_controls = tk.Frame(mid_right, bg=PANEL_BG)
+        net_controls.pack(fill=tk.X, padx=6, pady=(2, 2))
+
+        tk.Label(net_controls, text="Individuum:", bg=PANEL_BG, fg=FG,
+                 font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT)
+        self.combo_individual = ttk.Combobox(net_controls, state="readonly", width=8)
         self.combo_individual.pack(side=tk.LEFT, padx=4)
         self.combo_individual.bind("<<ComboboxSelected>>", self._on_select_individual)
+
+        self.lbl_net_info = tk.Label(net_controls, text="-", bg=PANEL_BG, fg=FG,
+                                     font=("Consolas", 9), justify=tk.LEFT, anchor="w")
+        self.lbl_net_info.pack(side=tk.LEFT, padx=6, fill=tk.X, expand=True)
+
+        self.canvas_net = tk.Canvas(mid_right, bg=PANEL_BG, highlightthickness=0)
+        self.canvas_net.pack(fill=tk.BOTH, expand=True, padx=6, pady=(0, 4))
+        self.canvas_net.bind("<Configure>", self._on_canvas_net_configure)
 
     # ==================================================================
     # Experiment-/Simulationssteuerung
@@ -230,7 +259,7 @@ class MarioEvolutionApp:
         self.simulation = None
         self.selected_index = 0
         self._hist_points = []
-        self._net_cache = {"label": None, "items": None}
+        self._net_cache = {"key": None, "items": None, "cw": 0, "ch": 0}
         self._refresh_individual_list()
 
     def _apply_gui_parameters(self, confirm: bool) -> None:
@@ -317,7 +346,11 @@ class MarioEvolutionApp:
         if self.experiment is None or self.experiment.best_overall_genome is None:
             messagebox.showinfo("Speichern", "Kein bewertetes Experiment zum Speichern.")
             return
-        path = filedialog.asksaveasfilename(defaultextension=".json",
+        initial_dir = "checkpoints" if Path("checkpoints").is_dir() else "."
+        default_name = f"mario_brain_gen{self.experiment.generation}.json"
+        path = filedialog.asksaveasfilename(initialdir=initial_dir,
+                                            initialfile=default_name,
+                                            defaultextension=".json",
                                             filetypes=[("JSON", "*.json")])
         if not path:
             return
@@ -328,7 +361,9 @@ class MarioEvolutionApp:
             messagebox.showerror("Speichern fehlgeschlagen", str(exc))
 
     def _on_load(self) -> None:
-        path = filedialog.askopenfilename(filetypes=[("JSON", "*.json")])
+        initial_dir = "checkpoints" if Path("checkpoints").is_dir() else "."
+        path = filedialog.askopenfilename(initialdir=initial_dir,
+                                          filetypes=[("JSON", "*.json")])
         if not path:
             return
         try:
@@ -342,6 +377,7 @@ class MarioEvolutionApp:
             self.simulation = None
             self._hist_points = [(s.generation, s.best_fitness, s.average_fitness)
                                  for s in self.experiment.history]
+            self._net_cache = {"key": None, "items": None, "cw": 0, "ch": 0}
             self._refresh_individual_list()
             self._draw_all()
             messagebox.showinfo("Laden", f"Experiment geladen:\n{path}")
@@ -353,7 +389,7 @@ class MarioEvolutionApp:
         idx = self.combo_individual.current()
         if idx >= 0:
             self.selected_index = idx
-            self._net_cache = {"label": None, "items": None}
+            self._net_cache = {"key": None, "items": None, "cw": 0, "ch": 0}
             self._draw_network()
 
     def _refresh_individual_list(self) -> None:
@@ -446,6 +482,16 @@ class MarioEvolutionApp:
             canvas.create_text(cx + 4, cy + 2, text=f"{label}  x={x_pos}",
                                fill=FG, anchor="nw", font=("Consolas", 8))
 
+    def _on_canvas_net_configure(self, _event=None) -> None:
+        """Wird aufgerufen, wenn sich die Größe des Netzwerk-Canvas ändert."""
+        if self.experiment is None:
+            return
+        cw = self.canvas_net.winfo_width()
+        ch = self.canvas_net.winfo_height()
+        if cw > 10 and ch > 10:
+            if cw != self._net_cache.get("cw") or ch != self._net_cache.get("ch"):
+                self._draw_network()
+
     def _draw_best(self) -> None:
         """Detailansicht des aktuell besten Laufs + Rekord über alles."""
         best_idx, best_fit = None, None
@@ -460,18 +506,20 @@ class MarioEvolutionApp:
                           f"Fitness {self.experiment.best_overall_fitness:.1f}")
 
         if best_idx is None:
-            info = f"Kein aktiver Lauf.\nRekord: {record_txt}"
+            info = f"Kein aktiver Lauf.\n\nRekord:\n{record_txt}"
             self.label_best_img.config(image="", text="")
             self._best_photo = None
         else:
             epi = self.simulation.episodes[best_idx]
             ind = self.simulation.individuals[best_idx]
-            info = (f"Aktuell bester Lauf: {ind.label}  Fitness {best_fit:.1f}\n"
-                    f"x_pos: {int(epi.last_info['x_pos'])}  Schritte: {epi.steps}  "
-                    f"blockiert: {epi.blocked_steps}  Status: {epi.status}\n"
-                    f"Rekord über alle Generationen: {record_txt}")
-            scale = 2  # 512x480 ist gut lesbar im rechten Panel
-            photo = frame_to_photo(epi.last_frame, scale, {})
+            info = (f"Bester Lauf: {ind.label}\n"
+                    f"Fitness:  {best_fit:.1f}\n"
+                    f"x_pos:    {int(epi.last_info.get('x_pos', 0))}\n"
+                    f"Schritte: {epi.steps} (block: {epi.blocked_steps})\n"
+                    f"Status:   {epi.status}\n\n"
+                    f"Rekord:\n{record_txt}")
+            # Subsample 2 (128x120), damit das neuronale Netz in der Mitte maximalen Platz erhält
+            photo = frame_to_photo(epi.last_frame, 1, {}).subsample(2, 2)
             self._best_photo = photo  # Referenz halten
             self.label_best_img.config(image=photo)
         self.lbl_best_info.config(text=info)
@@ -488,76 +536,131 @@ class MarioEvolutionApp:
         idx = min(self.selected_index, len(inds) - 1)
         ind = inds[idx]
         net = ind.network
-        key = (ind.label, net.describe())
-        if self._net_cache["label"] != key:
+
+        cw = canvas.winfo_width()
+        ch = canvas.winfo_height()
+        if cw <= 10 or ch <= 10:
+            cw = 600
+            ch = 280
+
+        key = (ind.label, net.describe(), cw, ch)
+        if self._net_cache.get("key") != key:
             canvas.delete("all")
-            self._net_cache["items"] = self._create_network_items(canvas, net)
-            self._net_cache["label"] = key
+            self._net_cache["items"] = self._create_network_items(canvas, net, cw, ch)
+            self._net_cache["key"] = key
+            self._net_cache["cw"] = cw
+            self._net_cache["ch"] = ch
             self.lbl_net_info.config(
-                text=f"{ind.label}  Architektur: {net.describe()}  "
-                     f"Parameter: {net.genome_size()}"
+                text=f"{ind.label} | {net.describe()} | {net.genome_size()} Parameter"
             )
         self._update_network_activations(canvas, net)
 
-    def _create_network_items(self, canvas: tk.Canvas, net: NeuralNetwork) -> dict:
+    def _create_network_items(self, canvas: tk.Canvas, net: NeuralNetwork, cw: int, ch: int) -> dict:
         """Erzeugt Struktur-Objekte (Neuronen, gewichtsfarbene Verbindungen)."""
-        cw = canvas.winfo_width() or 540
-        ch = canvas.winfo_height() or 240
         layers = net.layer_sizes
-        margin_x = 40
-        xs = [margin_x + i * (cw - 2 * margin_x) / (len(layers) - 1) for i in range(len(layers))]
+        n_layers = len(layers)
+
+        margin_left = 75    # Platz für Eingabe-Labels links
+        margin_right = 145  # Platz für Aktionsnamen rechts
+        margin_top = 28     # Platz für Schichttitel oben
+        margin_bottom = 26  # Platz für Legende unten
+
+        avail_w = max(100, cw - margin_left - margin_right)
+        avail_h = max(80, ch - margin_top - margin_bottom)
+
+        xs = [margin_left + i * (avail_w / (n_layers - 1)) for i in range(n_layers)]
         positions = []
+
+        max_size = max(layers)
+        step_y = avail_h / max(1, max_size - 1)
+        # Dynamischer Knotenradius: passt sich automatisch der Neuronenzahl und Canvas-Höhe an
+        r = max(5, min(10, int(step_y * 0.38)))
+
         for li, size in enumerate(layers):
             if size == 1:
-                ys = [ch / 2]
+                ys = [margin_top + avail_h / 2]
             else:
-                ys = [15 + ni * (ch - 45) / (size - 1) for ni in range(size)]
+                ys = [margin_top + ni * (avail_h / (size - 1)) for ni in range(size)]
             positions.append([(xs[li], y) for y in ys])
 
-        # Verbindungen: bei > 400 Kanten reduzierte Darstellung (klar
-        # gekennzeichnet, damit niemand Vollständigkeit annimmt).
-        max_lines = 400
+        # Schicht-Überschriften oben
+        canvas.create_text(xs[0], 12, text=f"Eingaben ({layers[0]})",
+                           fill=ACCENT, anchor="center", font=("Segoe UI", 9, "bold"))
+        for k in range(1, n_layers - 1):
+            canvas.create_text(xs[k], 12, text=f"Hidden ({layers[k]})",
+                               fill=ACCENT, anchor="center", font=("Segoe UI", 9, "bold"))
+        canvas.create_text(xs[-1], 12, text=f"Aktionen ({layers[-1]})",
+                           fill=ACCENT, anchor="center", font=("Segoe UI", 9, "bold"))
+
+        # Verbindungen zeichnen
+        max_lines = 500
         line_count, reduced = 0, False
-        for k in range(len(layers) - 1):
+        for k in range(n_layers - 1):
+            w_mat = net.weights[k]
             for a in range(layers[k]):
                 for b in range(layers[k + 1]):
                     if line_count >= max_lines:
                         reduced = True
                         break
-                    w = net.weights[k][b, a]
+                    w = float(w_mat[b, a])
                     color = POS_WEIGHT if w >= 0 else NEG_WEIGHT
-                    width = max(1, min(3, abs(w) * 2 + 0.5))
+                    width = max(1, min(4, int(abs(w) * 2.2) + 1))
                     canvas.create_line(positions[k][a][0], positions[k][a][1],
                                        positions[k + 1][b][0], positions[k + 1][b][1],
                                        fill=color, width=width, tags=("edge",))
                     line_count += 1
+
+        # Knoten zeichnen
         node_ids = []
-        for li in range(len(layers)):
+        for li in range(n_layers):
             ids = []
             for ni in range(layers[li]):
                 x, y = positions[li][ni]
-                r = 7 if li in (0, len(layers) - 1) else 6
-                ids.append(canvas.create_oval(x - r, y - r, x + r, y + r,
-                                              fill="#555", outline="#000", tags=("node",)))
+                node_r = r + 1 if li in (0, n_layers - 1) else r
+                ids.append(canvas.create_oval(
+                    x - node_r, y - node_r, x + node_r, y + node_r,
+                    fill="#44475a", outline="#191a1f", width=1.5, tags=("node",)
+                ))
             node_ids.append(ids)
 
-        # Legende
+        # Eingabe-Beschriftungen links
+        input_labels = [
+            "dx Ziel", "x_pos", "höhe", "fällt", "zeit", "tot",
+            "flagge", "hind_l", "hind_r", "alt:rechts", "alt:r_sp", "alt:spr", "alt:links"
+        ]
+        if layers[0] == len(input_labels):
+            for ni, name in enumerate(input_labels):
+                x, y = positions[0][ni]
+                canvas.create_text(x - (r + 7), y, text=name, fill=FG, anchor="e",
+                                   font=("Segoe UI", 8))
+        else:
+            for ni in range(layers[0]):
+                x, y = positions[0][ni]
+                canvas.create_text(x - (r + 7), y, text=f"in_{ni}", fill=FG, anchor="e",
+                                   font=("Segoe UI", 8))
+
+        # Aktions-Namen an Ausgabeneuronen rechts
+        for ni, name in enumerate(ALL_ACTIONS[:layers[-1]]):
+            x, y = positions[-1][ni]
+            canvas.create_text(x + (r + 8), y, text=name, fill=FG, anchor="w",
+                               font=("Segoe UI", 8))
+
+        # Legende unten
         ly = ch - 12
         canvas.create_line(10, ly, 30, ly, fill=POS_WEIGHT, width=2)
         canvas.create_text(34, ly, text="positives Gewicht", fill=FG, anchor="w",
                            font=("Segoe UI", 8))
-        canvas.create_line(160, ly, 180, ly, fill=NEG_WEIGHT, width=2)
-        canvas.create_text(184, ly, text="negatives Gewicht", fill=FG, anchor="w",
+        canvas.create_line(150, ly, 170, ly, fill=NEG_WEIGHT, width=2)
+        canvas.create_text(174, ly, text="negatives Gewicht", fill=FG, anchor="w",
+                           font=("Segoe UI", 8))
+        canvas.create_oval(290 - 4, ly - 4, 290 + 4, ly + 4, fill="#76ff03", outline="#ffffff")
+        canvas.create_text(298, ly, text="gewählte Aktion", fill=FG, anchor="w",
                            font=("Segoe UI", 8))
         if reduced:
-            canvas.create_text(cw - 10, ly, text="(reduziert: >400 Verbindungen)",
+            canvas.create_text(cw - 10, ly, text="(Kanten auf 500 begrenzt)",
                                fill="#ffab91", anchor="e", font=("Segoe UI", 8))
-        # Aktion-Namen an die Ausgabeneuronen schreiben
-        for ni, name in enumerate(ALL_ACTIONS):
-            x, y = positions[-1][ni]
-            canvas.create_text(x + 12, y, text=name, fill=FG, anchor="w",
-                               font=("Segoe UI", 7))
-        return {"positions": positions, "node_ids": node_ids}
+
+        return {"positions": positions, "node_ids": node_ids, "r": r}
 
     def _update_network_activations(self, canvas: tk.Canvas, net: NeuralNetwork) -> None:
         """Aktualisiert Knotenfarben mit den AKTUELLEN Aktivierungen.
@@ -565,24 +668,54 @@ class MarioEvolutionApp:
         Quelle: Beobachtung der Episode des gewählten Individuums (falls
         vorhanden) - echte, laufende Werte statt Dekoration.
         """
-        items = self._net_cache["items"]
+        items = self._net_cache.get("items")
         if not items:
             return
-        obs = out = None
+        node_ids = items["node_ids"]
+        obs = None
         if (self.simulation is not None
                 and self.selected_index < len(self.simulation.episodes)):
             epi = self.simulation.episodes[self.selected_index]
             obs = epi.observation()
-            out = net.forward(obs)
-        node_ids = items["node_ids"]
-        if obs is not None:
-            for i, nid in enumerate(node_ids[0]):
-                v = float(np.clip(obs[i], 0.0, 1.0))
-                c = int(80 + 175 * v)
-                canvas.itemconfig(nid, fill=f"#{c:02x}{c:02x}ff")
-        if out is not None:
-            for i, nid in enumerate(node_ids[-1]):
-                canvas.itemconfig(nid, fill=POS_WEIGHT if float(out[i]) >= 0 else NEG_WEIGHT)
+
+        if obs is None:
+            for layer_nodes in node_ids:
+                for nid in layer_nodes:
+                    canvas.itemconfig(nid, fill="#44475a", outline="#191a1f", width=1.5)
+            return
+
+        activations = [obs]
+        a = obs
+        n_layers = len(net.layer_sizes)
+        for k in range(n_layers - 1):
+            z = net.weights[k] @ a + net.biases[k]
+            a = net.output_activation(z) if k == n_layers - 2 else net.hidden_activation(z)
+            activations.append(a)
+
+        # 1. Eingaben: blaues Leuchten je nach Wert
+        for i, nid in enumerate(node_ids[0]):
+            v = float(np.clip(activations[0][i], 0.0, 1.0))
+            c = int(60 + 195 * v)
+            canvas.itemconfig(nid, fill=f"#{c:02x}{c:02x}ff", outline="#191a1f", width=1.5)
+
+        # 2. Versteckte Schichten: Cyan/Grün je nach ReLU-Aktivierung
+        for li in range(1, n_layers - 1):
+            h_act = activations[li]
+            h_max = max(1.0, float(np.max(h_act))) if h_act.size > 0 else 1.0
+            for i, nid in enumerate(node_ids[li]):
+                v = float(np.clip(h_act[i] / h_max, 0.0, 1.0))
+                g = int(60 + 195 * v)
+                canvas.itemconfig(nid, fill=f"#2a{g:02x}a0", outline="#191a1f", width=1.5)
+
+        # 3. Ausgaben: gewählte Aktion leuchtet hellgrün mit weißem Rand
+        chosen_action = int(np.argmax(activations[-1]))
+        for i, nid in enumerate(node_ids[-1]):
+            val = float(activations[-1][i])
+            if i == chosen_action:
+                canvas.itemconfig(nid, fill="#76ff03", outline="#ffffff", width=2.5)
+            else:
+                color = POS_WEIGHT if val >= 0 else NEG_WEIGHT
+                canvas.itemconfig(nid, fill=color, outline="#191a1f", width=1.5)
 
     # ------------------------------------------------------------------
     def _draw_stats(self) -> None:
