@@ -35,9 +35,8 @@ from tkinter import messagebox, filedialog, ttk
 import numpy as np
 
 from .actions import ALL_ACTIONS
-from .episode import EpisodeStatus
+from .episode import EndReason, EpisodeStatus
 from .network import NeuralNetwork
-from .observation import observation_labels
 from .population import Population
 from .evolution import EvolutionConfig
 from .experiment import Experiment
@@ -99,9 +98,11 @@ class MarioEvolutionApp:
         root.geometry("1440x900")
 
         # Standardkonfiguration (im GUI änderbar)
-        self.population_size = 8     # 8 Emulator-Instanzen parallel (siehe README)
+        self.population_size = 16     # 16 Emulator-Instanzen parallel
         self.hidden_sizes = [12]
         self.max_steps = 1000
+        self.stall_ttl = 120          # Stillstand-Toleranz (Schritte ohne x-Bestmarke)
+        self.auto_continue = True     # automatisch neue Generation starten, wenn alle tot
         self.rng = np.random.default_rng(42)
         self.evolution_config = EvolutionConfig(elite_count=2, mutation_rate=0.1,
                                                 mutation_strength=0.3)
@@ -135,6 +136,7 @@ class MarioEvolutionApp:
             ("Start", self._on_start, 8),
             ("Pause", self._on_pause, 8),
             ("1 Schritt", self._on_single_step, 9),
+            ("Alle beenden", self._on_terminate_all, 11),
             ("Neue Generation", self._on_new_generation, 14),
             ("Speichern", self._on_save, 9),
             ("Laden", self._on_load, 7),
@@ -142,14 +144,26 @@ class MarioEvolutionApp:
             tk.Button(header, text=text, width=width, command=cmd
                       ).pack(side=tk.LEFT, padx=3, pady=6)
 
+        # Auto-Weiter: wenn alle tot sind, automatisch neue Generation
+        # starten (abschaltbar).
+        self.auto_continue_var = tk.BooleanVar(value=self.auto_continue)
+        tk.Checkbutton(header, text="Auto-Weiter", variable=self.auto_continue_var,
+                       bg=PANEL_BG, fg=FG, selectcolor=PANEL_BG,
+                       activebackground=PANEL_BG, activeforeground=FG,
+                       command=self._on_toggle_auto).pack(side=tk.LEFT, padx=(8, 2))
+
         tk.Label(header, text="Population:", bg=PANEL_BG, fg=FG).pack(side=tk.LEFT, padx=(12, 2))
-        self.spin_pop = tk.Spinbox(header, from_=2, to=40, width=4,
+        self.spin_pop = tk.Spinbox(header, from_=2, to=80, width=4,
                                    textvariable=tk.StringVar(value=str(self.population_size)))
         self.spin_pop.pack(side=tk.LEFT)
         tk.Label(header, text="Versteckte Neuronen:", bg=PANEL_BG, fg=FG).pack(side=tk.LEFT, padx=(12, 2))
         self.spin_hidden = tk.Spinbox(header, from_=1, to=64, width=4,
                                       textvariable=tk.StringVar(value=str(self.hidden_sizes[0])))
         self.spin_hidden.pack(side=tk.LEFT)
+        tk.Label(header, text="Stillstand-TTL:", bg=PANEL_BG, fg=FG).pack(side=tk.LEFT, padx=(12, 2))
+        self.spin_stall = tk.Spinbox(header, from_=0, to=1000, width=5,
+                                     textvariable=tk.StringVar(value=str(self.stall_ttl)))
+        self.spin_stall.pack(side=tk.LEFT)
 
         self.lbl_gen = tk.Label(header, text="Generation 0", bg=PANEL_BG, fg=ACCENT,
                                 font=("Segoe UI", 11, "bold"))
@@ -158,13 +172,23 @@ class MarioEvolutionApp:
         main = tk.Frame(self.root, bg=BG)
         main.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
-        # LINKS: Raster aller Instanzen
+        # LINKS: Raster aller Instanzen + Status-Leiste
         left = tk.Frame(main, bg=BG)
         left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        tk.Label(left, text="Alle Mario-Instanzen (echte Spielszenen)", bg=BG, fg=FG,
-                 font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=8, pady=2)
+        left_header = tk.Frame(left, bg=BG)
+        left_header.pack(fill=tk.X, padx=8, pady=2)
+        tk.Label(left_header, text="Alle Mario-Instanzen (echte Spielszenen)", bg=BG, fg=FG,
+                 font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT)
+        self.lbl_active = tk.Label(left_header, text="", bg=BG, fg=ACCENT,
+                                   font=("Segoe UI", 10, "bold"))
+        self.lbl_active.pack(side=tk.RIGHT)
         self.canvas_all = tk.Canvas(left, bg=BG, highlightthickness=0)
         self.canvas_all.pack(fill=tk.BOTH, expand=True, padx=8, pady=4)
+        # Status-Leiste: kompakte Zustandsanzeige JEDES Individuums
+        # (aktiv/beendet + Fitness), damit man auf einen Blick sieht,
+        # wer noch "drin" ist.
+        self.status_bar = tk.Frame(left, bg=PANEL_BG)
+        self.status_bar.pack(fill=tk.X, padx=8, pady=(0, 4))
 
         # RECHTS: drei Panels
         right = tk.Frame(main, bg=BG, width=620)
@@ -255,6 +279,7 @@ class MarioEvolutionApp:
             evolution_config=self.evolution_config,
             rng=self.rng,
             max_steps=self.max_steps,
+            stall_ttl=self.stall_ttl,
         )
         self.simulation = None
         self.selected_index = 0
@@ -281,6 +306,22 @@ class MarioEvolutionApp:
             or pop_size != self.experiment.population.size
             or [hidden] != self.experiment.population.hidden_sizes
         )
+        # Stillstand-TTL: 0 = deaktiviert, > 0 = Toleranz in Schritten.
+        try:
+            stall = int(self.spin_stall.get())
+        except ValueError:
+            messagebox.showerror("Ungültige Parameter",
+                                 "Stillstand-TTL muss eine ganze Zahl sein.")
+            raise ValueError("ungültige GUI-Parameter")
+        if stall < 0:
+            stall = 0
+        self.stall_ttl = stall
+        if self.experiment is not None:
+            self.experiment.stall_ttl = stall
+        if self.simulation is not None:
+            # Läuft bereits: TTL-Änderung wirkt ab sofort auf ALLE Episoden.
+            for e in self.simulation.episodes:
+                e.stall_ttl = stall
         if needs_new and confirm and self.experiment is not None:
             if not messagebox.askyesno(
                     "Neue Population",
@@ -400,15 +441,49 @@ class MarioEvolutionApp:
         if 0 <= self.selected_index < len(labels):
             self.combo_individual.current(self.selected_index)
 
+    def _on_toggle_auto(self) -> None:
+        """Auto-Weiter ein-/ausschalten (wirkt ab dem nächsten Abschluss)."""
+        self.auto_continue = bool(self.auto_continue_var.get())
+
+    def _on_terminate_all(self) -> None:
+        """Alle noch aktiven Instanzen SAUBER beenden (Knopf 'Alle beenden').
+
+        Kein Warten auf TTL/Tod: jede Episode wird sauber abgeschlossen
+        (Fitness berechenbar, End-Grund 'manuell_beendet'), die laufende
+        Generation kann direkt ausgewertet werden.
+        """
+        if self.simulation is None:
+            return
+        n = self.simulation.terminate_all()
+        self._check_finished()
+        self._draw_all()
+        messagebox.showinfo(
+            "Alle beenden",
+            f"{n} Instanzen sauber beendet. Die Generation kann jetzt "
+            f"ausgewertet werden."
+        )
+
     def _check_finished(self) -> None:
-        """Wenn alle Episoden fertig: bewerten (Stats/Rekord) und pausieren."""
+        """Wenn alle Episoden fertig: bewerten (Stats/Rekord).
+
+        Danach: Wenn Auto-Weiter aktiv ist, wird AUTOMATISCH die nächste
+        Generation gestartet und die Simulation läuft weiter - der Nutzer
+        muss nichts drücken. Bei ausgeschaltetem Auto-Weiter wird
+        pausiert (klassisches Verhalten).
+        """
         if (self.simulation is not None and self.simulation.is_finished()
                 and self.experiment is not None):
             self.experiment.finish_round(self.simulation)
             self._hist_points = [(s.generation, s.best_fitness, s.average_fitness)
                                  for s in self.experiment.history]
             self._refresh_individual_list()
-            self.running = False
+            if self.auto_continue and self.running:
+                # Automatisch weiterlaufen: nächste Generation starten.
+                self.experiment.advance_generation()
+                self.simulation = self.experiment.start_round()
+                self._refresh_individual_list()
+            else:
+                self.running = False
 
     # ==================================================================
     # Timer-Loop (ereignisbasiert, nicht blockierend)
@@ -481,6 +556,45 @@ class MarioEvolutionApp:
             x_pos = int(epi.last_info.get("x_pos", 0))
             canvas.create_text(cx + 4, cy + 2, text=f"{label}  x={x_pos}",
                                fill=FG, anchor="nw", font=("Consolas", 8))
+        # Headline: wie viele sind noch aktiv?
+        self.lbl_active.config(
+            text=f"Aktiv: {self.simulation.active_count} / {len(self.simulation.episodes)}"
+        )
+        self._draw_status_bar()
+
+    def _draw_status_bar(self) -> None:
+        """Status-Leiste: kompakte Zuordnung JEDES Individuums.
+
+        Zeigt pro Individuum ein Farbfeld (Status) plus Label - so sieht
+        man auf einen Blick, welche Individuen noch drin sind und welche
+        nicht, auch wenn das Raster oben gerade nicht alle gut sichtbar
+        macht. Beendete sind rot/durchgestrichen, aktive gelb, Erfolg
+        gruen, mit End-Grund als Tooltip-ähnlichem Kürzel.
+        """
+        for child in self.status_bar.winfo_children():
+            child.destroy()
+        if self.simulation is None:
+            return
+        reason_short = {EndReason.MANUAL: "manuell", EndReason.STALL: "Stillstand",
+                        EndReason.TTL: "TTL", EndReason.DEAD: "gestorben",
+                        EndReason.GOAL: "Flagge"}
+        for idx, (ind, epi) in enumerate(zip(self.simulation.individuals,
+                                             self.simulation.episodes)):
+            color = {EpisodeStatus.ACTIVE: "#ffca28",
+                     EpisodeStatus.SUCCESS: "#66bb6a",
+                     EpisodeStatus.TERMINATED: "#ef5350"}[epi.status]
+            if epi.status == EpisodeStatus.ACTIVE:
+                text = f"{ind.label} aktiv"
+                fg = FG
+            else:
+                txt_reason = reason_short.get(epi.end_reason, epi.end_reason)
+                text = f"{ind.label} ✓ {txt_reason}"
+                fg = "#9e9e9e"  # beendete klar abgesetzt/grau
+            cell = tk.Frame(self.status_bar, bg=PANEL_BG)
+            cell.pack(side=tk.LEFT, padx=3, pady=1)
+            tk.Frame(cell, bg=color, width=10, height=14).pack(side=tk.LEFT, padx=(0, 3))
+            tk.Label(cell, text=text, bg=PANEL_BG, fg=fg,
+                     font=("Consolas", 8)).pack(side=tk.LEFT)
 
     def _on_canvas_net_configure(self, _event=None) -> None:
         """Wird aufgerufen, wenn sich die Größe des Netzwerk-Canvas ändert."""
