@@ -1,0 +1,13 @@
+# Abhängigkeiten für das Mario Neuroevolution Lab.
+#
+# Installation mit EINEM Befehl:
+#   pip install -r requirements.txt
+#
+# Hinweis: tkinter (für das Dashboard) ist Bestandteil der
+# Standard-Python-Installation unter Windows und wird nicht über pip
+# installiert - nur falls es fehlt (z.B. Linux: python3-tk Paket).
+
+numpy>=1.24
+gym-super-mario-bros>=7.4.0
+nes-py>=8.2.0
+pytest>=7.0
