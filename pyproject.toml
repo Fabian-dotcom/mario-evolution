@@ -1,0 +1,19 @@
+[project]
+name = "mario-evolution"
+version = "2.0.0"
+description = "Mario Neuroevolution Lab - Neuroevolution auf gym-super-mario-bros (reines NumPy-Feedforward-Netz, Tkinter-Dashboard)"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=1.24",
+    "gym-super-mario-bros>=7.4.0",
+    "nes-py>=8.2.0",
+]
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+[tool.setuptools.packages.find]
+where = ["src"]
+[tool.pytest.ini_options]
+testpaths = ["tests"]
