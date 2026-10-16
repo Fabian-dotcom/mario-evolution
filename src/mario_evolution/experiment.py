@@ -115,7 +115,8 @@ class Experiment:
                  evolution_config: EvolutionConfig,
                  rng: np.random.Generator,
                  max_steps: int = 1000,
-                 env_name: str = DEFAULT_ENV_NAME):
+                 env_name: str = DEFAULT_ENV_NAME,
+                 stall_ttl: int | None = 120):
         if not isinstance(population, Population):
             raise TypeError("Experiment: population muss Population sein")
         if not isinstance(rng, np.random.Generator):
@@ -126,6 +127,7 @@ class Experiment:
         self.evolver = Evolver(evolution_config, rng)
         self.rng = rng
         self.max_steps = max_steps
+        self.stall_ttl = stall_ttl
         self.env_name = env_name
         self.generation = 0
         self.history: list[GenerationStats] = []
@@ -145,6 +147,7 @@ class Experiment:
             individuals=self.population.individuals,
             env_name=self.env_name,
             max_steps=self.max_steps,
+            stall_ttl=self.stall_ttl,
         )
 
     def finish_round(self, simulation: MultiMarioSimulation) -> GenerationStats:
