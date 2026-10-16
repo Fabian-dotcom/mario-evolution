@@ -10,16 +10,19 @@ from mario_evolution.episode import EpisodeStatus
 class MockEpisode:
     def __init__(self, x_pos=120, steps=20, blocked=2, status=EpisodeStatus.ACTIVE):
         self.last_frame = np.zeros((240, 256, 3), dtype=np.uint8)
-        self.last_info = {"x_pos": x_pos}
+        self.last_info = {"x_pos": x_pos, "y_pixel": 193.0, "time": 400}
         self.steps = steps
         self.blocked_steps = blocked
         self.status = status
+        self.end_reason = None
+        self.stall_remaining = 10
 
     def fitness(self):
         return float(self.last_info["x_pos"])
 
     def observation(self):
-        return np.linspace(0.1, 0.9, 13)
+        from mario_evolution.observation import OBSERVATION_SIZE
+        return np.linspace(0.1, 0.9, OBSERVATION_SIZE)
 
 
 class MockSimulation:
@@ -29,6 +32,10 @@ class MockSimulation:
 
     def is_finished(self):
         return all(e.status != EpisodeStatus.ACTIVE for e in self.episodes)
+
+    @property
+    def active_count(self):
+        return sum(1 for e in self.episodes if e.status == EpisodeStatus.ACTIVE)
 
 
 def test_visualizer_layout_and_network_canvas():
