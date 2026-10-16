@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .episode import Episode, EpisodeStatus
+from .episode import EndReason, Episode, EpisodeStatus
 from .individual import Individual
 
 
@@ -54,21 +54,25 @@ class MultiMarioSimulation:
         episodes: Liste mit GENAU EINER Episode pro Individuum.
         individuals: zugehörige Individuen (Reihenfolge stabil).
         max_steps: Schrittbudget pro Episode.
+        stall_ttl: Stillstand-Toleranz pro Episode (Schritte ohne neue
+            x-Bestmarke); 0/None = deaktiviert.
     """
 
     def __init__(self,
                  individuals: list[Individual],
                  env_name: str = "SuperMarioBros-1-1-v0",
-                 max_steps: int = 1000):
+                 max_steps: int = 1000,
+                 stall_ttl: int | None = 120):
         if not isinstance(individuals, list) or not individuals:
             raise ValueError("MultiMarioSimulation: individuals muss nicht-leere Liste sein")
         if not isinstance(max_steps, int) or isinstance(max_steps, bool) or max_steps < 1:
             raise ValueError(f"MultiMarioSimulation: max_steps muss int >= 1 sein, erhielt {max_steps!r}")
         self.individuals = list(individuals)
         self.max_steps = max_steps
+        self.stall_ttl = stall_ttl
         # Für JEDES Individuum eine eigene Episode mit eigenem Emulator.
         self.episodes: list[Episode] = [
-            Episode(env=make_env(env_name), max_steps=max_steps)
+            Episode(env=make_env(env_name), max_steps=max_steps, stall_ttl=stall_ttl)
             for _ in self.individuals
         ]
 
@@ -102,6 +106,22 @@ class MultiMarioSimulation:
             if self.active_count == 0:
                 break  # alle fertig -> sauber beenden
             self.step_once()
+
+    def terminate_all(self, reason: str = EndReason.MANUAL) -> int:
+        """Beendet ALLE noch aktiven Episoden SAUBER und SOFORT.
+
+        Genau das gewünschte Verhalten: "alle tot, aber sauber
+        abgeschlossen" - jede Episode bekommt ihren End-Grund gesetzt,
+        die Fitness ist danach berechenbar, es gehen keine Werte
+        verloren (kein Abwurf laufender Emulatoren, kein Stillstand-
+        Timeout-Warten). Rückgabe: Anzahl der neu beendeten Episoden.
+        """
+        count = 0
+        for e in self.episodes:
+            if e.status == EpisodeStatus.ACTIVE:
+                e.terminate(reason)
+                count += 1
+        return count
 
     def fitness_values(self) -> list[float]:
         """Fitness aller Episoden (Reihenfolge = Individuen)."""
