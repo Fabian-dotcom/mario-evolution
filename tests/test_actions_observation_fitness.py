@@ -88,22 +88,22 @@ class TestObservation:
         assert far[0] - near[0] == pytest.approx(1000.0 / 4800.0, rel=1e-6)
 
     def test_wall_detection(self):
-        """Pixel-Sensorik: solider Block neben Mario -> Index 7/8 wird 1."""
+        """Pixel-Sensorik: solider Block neben Mario -> Index 9/10 wird 1."""
         from mario_evolution.observation import encode
         clean = encode(_synth_frame([]), _base_info())
         left = encode(_synth_frame(["links"]), _base_info())
         right = encode(_synth_frame(["rechts"]), _base_info())
-        assert clean[7] == 0.0 and clean[8] == 0.0
-        assert left[7] == 1.0
-        assert right[8] == 1.0
+        assert clean[9] == 0.0 and clean[10] == 0.0
+        assert left[9] == 1.0
+        assert right[10] == 1.0
 
     def test_enemy_detection(self):
         """Gegner (Goomba-Fell beige im Streifen) wird als Hindernis erkannt."""
         from mario_evolution.observation import encode
         clean = encode(_synth_frame([]), _base_info())
         enemy = encode(_synth_frame(["beige"]), _base_info())
-        assert clean[8] == 0.0
-        assert enemy[8] == 1.0
+        assert clean[10] == 0.0
+        assert enemy[10] == 1.0
 
     def test_different_inputs_different_outputs(self):
         """Das Netz kann auf die Beobachtung reagieren: Unterschiedliche
@@ -113,12 +113,24 @@ class TestObservation:
         o2 = encode(_synth_frame(["rechts"]), _base_info(x_pos=500.0, time=200))
         assert not np.allclose(o1, o2)
 
-    def test_one_hot_previous_action(self):
-        from mario_evolution.observation import encode
+    def test_one_hot_previous_action_mapping(self):
+        """One-Hot-Spalten zeigen auf die DOKUMENTIERTEN Navigations-
+        Aktionen (Bugfix): rechts=1, rechts_sprung=2, springen=5, links=6.
+        Vorher zeigten die Spalten auf die ersten vier Indizes, was zur
+        Legende nicht passte."""
+        from mario_evolution.observation import encode, ONE_HOT_ACTION_INDICES
+        assert ONE_HOT_ACTION_INDICES == (1, 2, 5, 6)
         none = encode(_synth_frame([]), _base_info())               # keine Aktion
         right = encode(_synth_frame([]), _base_info(), previous_action_index=1)
-        assert np.allclose(none[9:13], 0.0)
-        assert right[10] == 1.0 and right[9] == 0.0
+        jump = encode(_synth_frame([]), _base_info(), previous_action_index=5)
+        assert np.allclose(none[13:16], 0.0)
+        assert right[13] == 1.0 and right[14] == 0.0    # Spalte 1 -> rechts
+        assert jump[15] == 1.0                          # Spalte 3 -> springen
+        # "halten" (0) und "rennen_rechts" (3) erzeugen KEINE One-Hot-1:
+        hold = encode(_synth_frame([]), _base_info(), previous_action_index=0)
+        run = encode(_synth_frame([]), _base_info(), previous_action_index=3)
+        assert np.allclose(hold[13:16], 0.0)
+        assert np.allclose(run[13:16], 0.0)
 
     def test_invalid_inputs_rejected(self):
         from mario_evolution.observation import encode
@@ -132,6 +144,48 @@ class TestObservation:
     def test_labels_match_size(self):
         from mario_evolution.observation import observation_labels, OBSERVATION_SIZE
         assert len(observation_labels()) == OBSERVATION_SIZE
+
+
+class TestObservationNewSensors:
+    """Neue Sensoren: Geschwindigkeit, Sprungphase, Hindernis-Distanz."""
+
+    def test_speed_sensor(self):
+        """Geschwindigkeit = (x - x_vor)/8: 0 bei Stillstand, 1 bei Sprung."""
+        from mario_evolution.observation import encode
+        still = encode(_synth_frame([]), _base_info(x_pos=100.0), previous_x_pos=100.0)
+        fast = encode(_synth_frame([]), _base_info(x_pos=108.0), previous_x_pos=100.0)
+        assert still[2] == 0.0
+        assert fast[2] == pytest.approx(1.0)   # 8 px / 8 = 1.0 (geklemmt)
+
+    def test_jump_phase(self):
+        """Sprungphase: Boden=0, aufsteigend=0.5, fallend=1."""
+        from mario_evolution.observation import encode
+        ground = encode(_synth_frame([]), _base_info(y_pixel=193.0),
+                        previous_y_pixel=193.0)
+        rising = encode(_synth_frame([]), _base_info(y_pixel=180.0),
+                        previous_y_pixel=190.0)
+        falling = encode(_synth_frame([]), _base_info(y_pixel=185.0),
+                         previous_y_pixel=175.0)
+        assert ground[4] == 0.0
+        assert rising[4] == 0.5
+        assert falling[4] == 1.0
+
+    def test_obstacle_distance_two_bands(self):
+        """Distanz-Sensoren: naher Streifen voll = 1, ferner Streifen
+        meldet ankommende Hindernisse, bevor sie direkt vor Mario sind."""
+        from mario_evolution.observation import encode
+        frame = _synth_frame([])
+        frame[170:200, 55:87, :] = (0, 168, 0)    # direkt neben Mario (nah)
+        frame[170:200, 87:119, :] = (0, 168, 0)   # gleicher Block (fern)
+        obs = encode(frame, _base_info())
+        assert obs[10] == 1.0        # hindernis_rechts (binär, Schwelle 0.20)
+        assert obs[11] > 0.4         # naher Streifen: Blockanteil sichtbar
+        assert obs[12] > 0.4         # ferner Streifen sieht den Block auch
+
+    def test_free_field_distance_zero(self):
+        from mario_evolution.observation import encode
+        obs = encode(_synth_frame([]), _base_info())
+        assert obs[11] == 0.0 and obs[12] == 0.0
 
 
 class TestFitness:
