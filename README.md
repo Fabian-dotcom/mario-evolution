@@ -188,19 +188,30 @@ schlägt jede Strafe; effizientere Erfolge schlagen ineffiziente.
 
 ## 6. Installation
 
+**Ein-Klick-Start (Windows):**
+
+```powershell
+.\start.ps1
+```
+
+Das Skript erstellt bei Bedarf eine virtuelle Umgebung `.venv`,
+installiert alle Abhängigkeiten und startet das Dashboard.
+
+**Manuell (alle Systeme):**
+
 ```powershell
 # Empfohlen: virtuelle Umgebung
 python -m venv .venv
-.venv\Scripts\Activate.ps1
+.venv\Scripts\Activate.ps1        # Windows
+# source .venv/bin/activate        # Linux/macOS
 
-# Abhängigkeiten (NumPy + Emulator)
-pip install numpy gym-super-mario-bros nes-py pytest
+# ALLE Abhängigkeiten mit EINEM Befehl:
+pip install -r requirements.txt
 ```
 
-`nes-py` bringt den NES-Emulator als kompiliertes Binary mit; für
-Windows/Python 3.12+ existieren fertige Wheels. Auf sehr neuen
-Python-Versionen (z. B. 3.14) ggf. das passende nes-py-Wheel
-installieren.
+Die `requirements.txt` enthält NumPy, gym-super-mario-bros (Spiel),
+nes-py (Emulator) und pytest (Tests). `tkinter` (Dashboard) ist Teil
+der Standard-Python-Installation und kommt nicht über pip.
 
 ## 7. Start
 
