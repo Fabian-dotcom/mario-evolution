@@ -85,6 +85,65 @@ def frame_to_photo(frame: np.ndarray, scale: int, zoom_cache: dict) -> tk.PhotoI
     return img
 
 
+def _region_color(region: np.ndarray) -> tuple[int, int, int]:
+    """Farb-Overlay für eine Sensor-Region (wie sie das Netz sieht).
+
+    Wiederverwendet die GLEICHE Klassifikation wie `observation.encode()`:
+    - frei (Himmel/Boden):   gruen
+    - solides Hindernis:     rot
+    - Gegner erkannt:        orange
+    """
+    from .observation import (_is_solid, _solid_fraction, ENEMY_RGB, GROUND_RGB,
+                              SKY_RGB)
+    if region.size == 0:
+        return (0, 200, 0)  # grau = ausserhalb des Bildes
+    enemy = np.all(np.abs(region.astype(int) - np.array(ENEMY_RGB)) <= 10, axis=-1)
+    if enemy.any():
+        return (255, 152, 0)   # orange: Gegner erkannt
+    if _is_solid(region):
+        return (239, 83, 80)   # rot: solides Hindernis
+    return (0, 200, 0)         # gruen: frei
+
+
+def _ai_view_frame(frame: np.ndarray, info: dict) -> np.ndarray:
+    """Erzeugt eine Frame-Kopie mit FARBIG markierten Sensorfenstern.
+
+    Zeichnet in den Frame dieselben Streifen, die encode() abtastet
+    (links-nah, rechts-nah, rechts-fern), farbcodiert nach dem, was
+    die Klassifikation sieht. Auch ohne laufende Simulation nutzbar.
+    """
+    from .observation import _find_mario_screen_x, _sample_region
+
+    out = frame.copy()
+    y_pixel = float(info.get("y_pixel", GROUND_Y_PIXEL_FALLBACK))
+    foot_screen_y = int(y_pixel) + 30
+    top_y = max(0, foot_screen_y - 78)
+    bottom_y = max(0, foot_screen_y - 8)
+    mx = _find_mario_screen_x(frame)
+    windows = (
+        (mx - 40, mx - 8),   # links-nah (Sensor 9)
+        (mx + 8, mx + 40),   # rechts-nah (Sensor 10/11)
+        (mx + 40, mx + 72),  # rechts-fern (Sensor 12)
+    )
+    for x0, x1 in windows:
+        region = _sample_region(out, top_y, bottom_y, x0, x1)
+        color = _region_color(region)
+        h_out = out[top_y:bottom_y, x0:x1, :].shape[0]
+        if h_out <= 0:
+            continue
+        # Halbtransparent wirken lassen: pro Pixel 60% Overlay + 40% Original
+        block = out[top_y:bottom_y, x0:x1, :].astype(np.int16)
+        overlay = np.full_like(block, color, dtype=np.int16)
+        blended = (overlay * 6 + block * 4) // 10
+        out[top_y:bottom_y, x0:x1, :] = blended.astype(np.uint8)
+    # Mario-Marker
+    out[foot_screen_y - 1:foot_screen_y + 1, mx - 1:mx + 1, :] = (255, 255, 0)
+    return out
+
+
+GROUND_Y_PIXEL_FALLBACK = 176  # Bodenlinie aus observation.py
+
+
 class MarioEvolutionApp:
     """Hauptfenster des Dashboards."""
 
@@ -160,6 +219,15 @@ class MarioEvolutionApp:
                        bg=PANEL_BG, fg=FG, selectcolor=PANEL_BG,
                        activebackground=PANEL_BG, activeforeground=FG,
                        command=self._on_toggle_auto).pack(side=tk.LEFT, padx=(8, 2))
+
+        # "KI-Sicht" umschalten: zeigt statt des normalen Spielbilds das,
+        # was die Sensorik des Netzes sieht (Sensorfenster mit Zustand:
+        # gruen = frei, rot = solides Hindernis, orange = Gegner erkannt).
+        self.show_ai_view_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(header, text="KI-Sicht", variable=self.show_ai_view_var,
+                       bg=PANEL_BG, fg=ACCENT, selectcolor=PANEL_BG,
+                       activebackground=PANEL_BG, activeforeground=FG,
+                       command=self._draw_all).pack(side=tk.LEFT, padx=(8, 2))
 
         tk.Label(header, text="Population:", bg=PANEL_BG, fg=FG).pack(side=tk.LEFT, padx=(12, 2))
         self.spin_pop = tk.Spinbox(header, from_=2, to=80, width=4,
@@ -558,8 +626,13 @@ class MarioEvolutionApp:
             r, c = divmod(idx, cols)
             cx = int(c * cell_w + (cell_w - img_w) / 2)
             cy = int(r * cell_h + (cell_h - img_h) / 2)
-            # Echter Frame aus dem Emulator dieser Instanz:
-            photo = frame_to_photo(epi.last_frame, scale,
+            # Echter Frame aus dem Emulator dieser Instanz; bei aktivierter
+            # "KI-Sicht" wird das Overlay der Sensorik eingeblendet.
+            if self.show_ai_view_var.get():
+                render_frame = _ai_view_frame(epi.last_frame, epi.last_info)
+            else:
+                render_frame = epi.last_frame
+            photo = frame_to_photo(render_frame, scale,
                                    zoom_cache={})  # Caching pro Tick reicht
             self._photo_refs.append(photo)  # Referenz halten (tkinter!)
             canvas.create_image(cx, cy, image=photo, anchor="nw")
