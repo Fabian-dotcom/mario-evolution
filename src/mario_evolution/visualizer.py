@@ -95,7 +95,16 @@ class MarioEvolutionApp:
         self.root = root
         root.title("Mario Neuroevolution Lab - gym-super-mario-bros")
         root.configure(bg=BG)
-        root.geometry("1440x900")
+        # Fenster an den Bildschirm anpassen: Bei kleinen Displays
+        # (z. B. 1366x768) wuerde eine feste 1440x900-Groesse die rechte
+        # Spalte (Netz/Statistiken) abschneiden - sie waere unsichtbar.
+        scr_w = max(800, root.winfo_screenwidth() - 40)
+        scr_h = max(600, root.winfo_screenheight() - 80)
+        root.geometry(f"{scr_w}x{scr_h}")
+        root.minsize(1024, 640)
+        # Rechte Spalte: fixe Breite, aber nie breiter als ein Drittel des
+        # Bildschirms (sonst wuerde sie auf kleinen Displays abgeschnitten).
+        self.right_width = max(560, min(620, scr_w // 3))
 
         # Standardkonfiguration (im GUI änderbar)
         self.population_size = 16     # 16 Emulator-Instanzen parallel
@@ -172,6 +181,17 @@ class MarioEvolutionApp:
         main = tk.Frame(self.root, bg=BG)
         main.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
+        # WICHTIG: RECHTS zuerst packen. Der Tk-Packer verteilt Platz in
+        # Pack-Reihenfolge - waere LINKS zuerst gepackt, wuerde das linke
+        # Raster bei groesseren Populationen den ganzen Platz beanspruchen
+        # und die rechte Spalte (Bester Lauf, Netz, Statistiken) auf
+        # Breite 0 quetschen: die "Seitenansicht" waere unsichtbar.
+
+        # RECHTS: drei Panels (zuerst packen! siehe Hinweis oben)
+        right = tk.Frame(main, bg=BG, width=self.right_width)
+        right.pack(side=tk.RIGHT, fill=tk.Y)
+        right.pack_propagate(False)
+
         # LINKS: Raster aller Instanzen + Status-Leiste
         left = tk.Frame(main, bg=BG)
         left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -189,11 +209,6 @@ class MarioEvolutionApp:
         # wer noch "drin" ist.
         self.status_bar = tk.Frame(left, bg=PANEL_BG)
         self.status_bar.pack(fill=tk.X, padx=8, pady=(0, 4))
-
-        # RECHTS: drei Panels
-        right = tk.Frame(main, bg=BG, width=620)
-        right.pack(side=tk.RIGHT, fill=tk.Y)
-        right.pack_propagate(False)
 
         # RECHTS OBEN: Bester Lauf (kompakt mit Vorschau 128x120 und Daten)
         top_right = tk.LabelFrame(right, text="Bester Lauf", bg=PANEL_BG, fg=ACCENT)
@@ -407,6 +422,9 @@ class MarioEvolutionApp:
                                           filetypes=[("JSON", "*.json")])
         if not path:
             return
+        self._on_load_file(path)
+
+    def _on_load_file(self, path: str) -> None:
         try:
             self.experiment = Experiment.load(
                 path, evolution_config=self.evolution_config,
